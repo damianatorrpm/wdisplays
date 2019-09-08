@@ -1,0 +1,2 @@
+option('kanshi', type: 'feature', value: 'auto', description: 'Enable integration with the kanshi daemon')
+

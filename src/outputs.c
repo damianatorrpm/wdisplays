@@ -27,7 +27,6 @@
  * https://github.com/emersion/kanshi/blob/38d27474b686fcc8324cc5e454741a49577c0988/main.c
  */
 
-#define _GNU_SOURCE
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +39,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <glib.h>
+
 #include "wdisplays.h"
+#ifdef HAVE_KANSHI
+#include "kanshi.h"
+#endif
 
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
@@ -65,6 +69,109 @@ static void destroy_pending(struct wd_pending_config *pending) {
   free(pending->outputs);
   free(pending);
 }
+
+#ifdef HAVE_KANSHI
+static struct kanshi_profile *find_active_profile(
+    const struct kanshi_config *config, const struct wl_list *outputs) {
+  struct kanshi_profile *profile;
+  int head_count = wl_list_length(outputs);
+  wl_list_for_each(profile, &config->profiles, link) {
+    unsigned found_count = 0;
+    struct kanshi_profile_output *output;
+    wl_list_for_each(output, &profile->outputs, link) {
+      struct wd_head_config *head;
+      wl_list_for_each(head, outputs, link) {
+        if (strcmp(output->name, head->head->name) == 0) {
+          found_count++;
+          break;
+        }
+      }
+    }
+    if (found_count == head_count) {
+      return profile;
+    }
+  }
+  return NULL;
+}
+
+static void update_profile_output(struct kanshi_profile_output *output,
+    const struct wd_head_config *head) {
+  output->enabled = head->enabled;
+  output->fields |= KANSHI_OUTPUT_ENABLED;
+  if (head->enabled) {
+    output->fields |= KANSHI_OUTPUT_MODE | KANSHI_OUTPUT_POSITION
+      | KANSHI_OUTPUT_SCALE | KANSHI_OUTPUT_TRANSFORM;
+    output->mode.width = head->width;
+    output->mode.height = head->height;
+    output->mode.refresh = head->refresh;
+    output->position.x = head->x;
+    output->position.y = head->y;
+    output->scale = head->scale;
+    output->transform = head->transform;
+  }
+}
+
+static bool save_config(const struct wl_list *outputs) {
+  g_autofree const char *config_dir = g_strjoin("/",
+      g_get_user_config_dir(), "kanshi/config.d", NULL);
+  if (g_mkdir_with_parents(config_dir, 0700) == -1) {
+    fprintf(stderr, "g_mkdir_with_parents failed: %s: %s\n",
+        config_dir, strerror(errno));
+    return false;
+  }
+  g_autofree const char *config_path = g_strjoin("/",
+      config_dir, "50-wdisplays", NULL);
+  struct kanshi_config *config = kanshi_parse_config(config_path);
+  if (config == NULL) {
+    config = calloc(1, sizeof(*config));
+    wl_list_init(&config->profiles);
+  }
+  struct kanshi_profile *profile = find_active_profile(config, outputs);
+  if (profile == NULL) {
+    profile = calloc(1, sizeof(*profile));
+    wl_list_init(&profile->outputs);
+    struct wd_head_config *head;
+    wl_list_for_each(head, outputs, link) {
+      struct kanshi_profile_output *output = calloc(1, sizeof(*output));
+      output->name = strdup(head->head->name);
+      update_profile_output(output, head);
+      wl_list_insert(profile->outputs.prev, &output->link);
+    }
+    wl_list_insert(&config->profiles, &profile->link);
+  } else {
+    struct kanshi_profile_output *output;
+    wl_list_for_each(output, &profile->outputs, link) {
+      struct wd_head_config *head;
+      wl_list_for_each(head, outputs, link) {
+        if (strcmp(output->name, head->head->name) == 0) {
+          update_profile_output(output, head);
+          break;
+        }
+      }
+    }
+  }
+
+  kanshi_save_config(config_path, config);
+  kanshi_destroy_config(config);
+
+  GError *error = NULL;
+  gchar *argv[] = { KANSHICTL_PATH, "reload", NULL };
+  gint status;
+  g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+      NULL, NULL, &status, &error);
+  if (error != NULL) {
+    fprintf(stderr, "Could not execute " KANSHICTL_PATH ": %s\n",
+        error->message);
+    g_error_free(error);
+    return false;
+  }
+  if (status != EXIT_SUCCESS) {
+    fprintf(stderr, "Could not execute " KANSHICTL_PATH "\n");
+    return false;
+  }
+  return true;
+}
+#endif
 
 static void config_handle_succeeded(void *data,
     struct zwlr_output_configuration_v1 *config) {
@@ -103,12 +210,20 @@ static const struct zwlr_output_configuration_v1_listener config_listener = {
 
 void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs,
     struct wl_display *display) {
-  struct zwlr_output_configuration_v1 *config =
-    zwlr_output_manager_v1_create_configuration(state->output_manager, state->serial);
-
   struct wd_pending_config *pending = calloc(1, sizeof(*pending));
   pending->state = state;
   pending->outputs = new_outputs;
+
+#ifdef HAVE_KANSHI
+  if (save_config(new_outputs)) {
+    wd_ui_apply_done(pending->state, pending->outputs);
+    destroy_pending(pending);
+    return;
+  }
+#endif
+
+  struct zwlr_output_configuration_v1 *config =
+    zwlr_output_manager_v1_create_configuration(state->output_manager, state->serial);
 
   zwlr_output_configuration_v1_add_listener(config, &config_listener, pending);
 
@@ -177,19 +292,12 @@ static void wd_frame_destroy(struct wd_frame *frame) {
 }
 
 static int create_shm_file(size_t size, const char *fmt, ...) {
-  char *shm_name = NULL;
   int fd = -1;
 
   va_list vl;
   va_start(vl, fmt);
-  int result = vasprintf(&shm_name, fmt, vl);
+  char *shm_name = g_strdup_vprintf(fmt, vl);
   va_end(vl);
-
-  if (result == -1) {
-    fprintf(stderr, "asprintf: %s\n", strerror(errno));
-    shm_name = NULL;
-    return -1;
-  }
 
   fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
   if (fd == -1) {

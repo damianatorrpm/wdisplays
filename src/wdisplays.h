@@ -28,8 +28,8 @@
  * https://github.com/emersion/kanshi/blob/38d27474b686fcc8324cc5e454741a49577c0988/include/config.h
  */
 
-#ifndef WDISPLAY_WDISPLAY_H
-#define WDISPLAY_WDISPLAY_H
+#ifndef WDISPLAYS_WDISPLAYS_H
+#define WDISPLAYS_WDISPLAYS_H
 
 #define HEADS_MAX 64
 #define HOVER_USECS (100 * 1000)
@@ -249,7 +249,6 @@ struct wd_state {
   struct wd_gl_data *gl_data;
   struct wd_render_data render;
 };
-
 
 /*
  * Creates the application state structure.
