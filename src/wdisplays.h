@@ -27,6 +27,8 @@ struct zxdg_output_manager_v1;
 struct zwlr_output_mode_v1;
 struct zwlr_output_head_v1;
 struct zwlr_output_manager_v1;
+struct zwlr_export_dmabuf_manager_v1;
+struct zwlr_export_dmabuf_frame_v1;
 struct zwlr_screencopy_manager_v1;
 struct zwlr_screencopy_frame_v1;
 struct zwlr_layer_shell_v1;
@@ -41,6 +43,8 @@ typedef struct _GdkCursor GdkCursor;
 struct _cairo_surface;
 typedef struct _cairo_surface cairo_surface_t;
 
+typedef void *EGLImageKHR;
+
 struct wd_output {
   struct wd_state *state;
   struct zxdg_output_v1 *xdg_output;
@@ -53,21 +57,30 @@ struct wd_output {
   struct zwlr_layer_surface_v1 *overlay_layer_surface;
 };
 
+#define WD_MAX_PLANES 4
+
 struct wd_frame {
   struct wd_output *output;
-  struct zwlr_screencopy_frame_v1 *wlr_frame;
+  struct zwlr_export_dmabuf_frame_v1 *export_frame;
+  struct zwlr_screencopy_frame_v1 *copy_frame;
 
   struct wl_list link;
-  int capture_fd;
-  unsigned stride;
+
   unsigned width;
   unsigned height;
+  uint64_t tick;
+
+  uint32_t format;
+  uint32_t flags;
+  uint64_t modifier;
+  uint32_t n_planes;
+  int fds[WD_MAX_PLANES];
+  uint32_t offsets[WD_MAX_PLANES];
+  uint32_t strides[WD_MAX_PLANES];
   struct wl_shm_pool *pool;
   struct wl_buffer *buffer;
   uint8_t *pixels;
-  uint64_t tick;
-  bool y_invert;
-  bool swap_rgb;
+  bool ready;
 };
 
 struct wd_head_config {
@@ -141,15 +154,17 @@ struct wd_render_head_data {
   struct wd_render_head_flags active;
 
   uint8_t *pixels;
+  EGLImageKHR image;
   unsigned tex_stride;
   unsigned tex_width;
   unsigned tex_height;
 
-  bool preview;
-  bool y_invert;
-  bool swap_rgb;
-  bool hovered;
-  bool clicked;
+  uint32_t preview : 1,
+           y_invert : 1,
+           swap_rgb : 1,
+           has_alpha : 1,
+           hovered : 1,
+           clicked : 1;
 };
 
 struct wd_render_data {
@@ -166,6 +181,7 @@ struct wd_render_data {
   int x_origin;
   int y_origin;
   uint64_t updated_at;
+  bool external_images;
 
   struct wl_list heads;
 };
@@ -178,6 +194,7 @@ struct wd_point {
 struct wd_state {
   struct zxdg_output_manager_v1 *xdg_output_manager;
   struct zwlr_output_manager_v1 *output_manager;
+  struct zwlr_export_dmabuf_manager_v1 *export_manager;
   struct zwlr_screencopy_manager_v1 *copy_manager;
   struct zwlr_layer_shell_v1 *layer_shell;
   struct wl_shm *shm;
@@ -311,8 +328,14 @@ void wd_ui_show_error(struct wd_state *state, const char *message);
 /*
  * Compiles the GL shaders.
  */
-struct wd_gl_data *wd_gl_setup(void);
+struct wd_gl_data *wd_gl_setup(struct wl_display *display);
 
+/*
+ * Creates an EGLImage from a given output frame. The frame must have a dmabuf
+ * received from a wlr_export_dmabuf_frame.
+ */
+EGLImageKHR wd_gl_create_dmabuf_texture(struct wd_gl_data *res,
+    struct wd_frame *frame);
 /*
  * Renders the GL scene.
  */

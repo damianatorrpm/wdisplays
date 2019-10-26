@@ -8,6 +8,7 @@ gdk = dependency('gdk-3.0', version: '>= 3.24')
 gtk = dependency('gtk+-3.0', version: '>= 3.24')
 assert(gdk.get_pkgconfig_variable('targets').split().contains('wayland'), 'Wayland GDK backend not present')
 epoxy = dependency('epoxy')
+libdrm = dependency('libdrm')
 
 configure_file(input: 'config.h.in', output: 'config.h', configuration: conf)
 
@@ -28,6 +29,7 @@ executable(
     wayland_client,
     client_protos,
     epoxy,
+    libdrm,
     gtk
   ],
   install: true

@@ -3,10 +3,13 @@
 
 #include <gtk/gtk.h>
 #include <gdk/gdkwayland.h>
+#include <drm_fourcc.h>
 
 #include "wdisplays.h"
 #include "glviewport.h"
 #include "headform.h"
+
+#include "linux-dmabuf-unstable-v1-client-protocol.h"
 
 __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
   GtkWindow *parent = gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));
@@ -438,7 +441,11 @@ static void canvas_realize(GtkWidget *widget, gpointer data) {
   }
 
   struct wd_state *state = data;
-  state->gl_data = wd_gl_setup();
+
+  GdkWindow *window = gtk_widget_get_window(widget);
+  GdkDisplay *display = gdk_window_get_display(window);
+  struct wl_display *wl_display = gdk_wayland_display_get_wl_display(display);
+  state->gl_data = wd_gl_setup(wl_display);
 }
 
 static inline bool size_changed(const struct wd_render_head_data *render) {
@@ -524,6 +531,7 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
   uint64_t tick = gdk_frame_clock_get_frame_time(clock);
 
   wd_capture_frame(state);
+  state->render.external_images = state->export_manager != NULL;
 
   struct wd_head *head;
   wl_list_for_each(head, &state->heads, link) {
@@ -534,16 +542,28 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
       frame = wl_container_of(output->frames.prev, frame, link);
     }
     if (render != NULL) {
-      if (state->capture && frame != NULL && frame->pixels != NULL) {
+      if (state->capture && frame != NULL && frame->ready) {
         if (frame->tick > render->updated_at) {
-          render->tex_stride = frame->stride;
           render->tex_width = frame->width;
           render->tex_height = frame->height;
-          render->pixels = frame->pixels;
+          if (state->render.external_images) {
+            render->pixels = NULL;
+            render->image = wd_gl_create_dmabuf_texture(state->gl_data, frame);
+            render->has_alpha = TRUE;
+            render->swap_rgb = TRUE;
+          } else {
+            render->pixels = frame->pixels;
+            render->image = NULL;
+            render->tex_stride = frame->strides[0];
+            render->swap_rgb = frame->format == WL_SHM_FORMAT_ABGR8888
+              || frame->format == WL_SHM_FORMAT_XBGR8888;
+            render->has_alpha = frame->format == WL_SHM_FORMAT_ARGB8888
+              || frame->format == WL_SHM_FORMAT_ABGR8888;
+          }
+          render->y_invert = frame->flags &
+            ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT;
           render->preview = TRUE;
           render->updated_at = tick;
-          render->y_invert = frame->y_invert;
-          render->swap_rgb = frame->swap_rgb;
         }
         if (render->preview) {
           render->active.rotation = render->queued.rotation;
@@ -560,10 +580,12 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
         head->surface = draw_head(pango, &state->render, head->name,
             render->tex_width, render->tex_height);
         render->pixels = cairo_image_surface_get_data(head->surface);
+        render->image = NULL;
         render->tex_stride = cairo_image_surface_get_stride(head->surface);
         render->updated_at = tick;
         render->active.rotation = 0;
         render->active.x_invert = FALSE;
+        render->has_alpha = FALSE;
         render->y_invert = FALSE;
         render->swap_rgb = FALSE;
       }
@@ -1054,7 +1076,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   if (state->xdg_output_manager == NULL) {
     wd_fatal_error(1, "Compositor doesn't support xdg-output-unstable-v1");
   }
-  if (state->copy_manager == NULL) {
+  if (state->copy_manager == NULL && state->export_manager == NULL) {
     state->capture = FALSE;
     g_simple_action_set_state(capture_action, g_variant_new_boolean(state->capture));
     g_simple_action_set_enabled(capture_action, FALSE);

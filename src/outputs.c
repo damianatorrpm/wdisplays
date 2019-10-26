@@ -25,6 +25,8 @@
 
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-unstable-v1-client-protocol.h"
+#include "wlr-export-dmabuf-unstable-v1-client-protocol.h"
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
@@ -143,15 +145,18 @@ void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs,
 
 static void wd_frame_destroy(struct wd_frame *frame) {
   if (frame->pixels != NULL)
-    munmap(frame->pixels, frame->height * frame->stride);
+    munmap(frame->pixels, frame->height * frame->strides[0]);
   if (frame->buffer != NULL)
     wl_buffer_destroy(frame->buffer);
   if (frame->pool != NULL)
     wl_shm_pool_destroy(frame->pool);
-  if (frame->capture_fd != -1)
-    close(frame->capture_fd);
-  if (frame->wlr_frame != NULL)
-    zwlr_screencopy_frame_v1_destroy(frame->wlr_frame);
+  for (int i = 0; i < frame->n_planes; i++)
+    if (frame->fds[i])
+      close(frame->fds[i]);
+  if (frame->copy_frame != NULL)
+    zwlr_screencopy_frame_v1_destroy(frame->copy_frame);
+  if (frame->export_frame != NULL)
+    zwlr_export_dmabuf_frame_v1_destroy(frame->export_frame);
 
   wl_list_remove(&frame->link);
   free(frame);
@@ -189,6 +194,112 @@ static int create_shm_file(size_t size, const char *fmt, ...) {
   return fd;
 }
 
+static void make_frame_current(struct wd_frame *frame,
+    uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {
+  uint64_t tv_sec = (uint64_t) tv_sec_hi << 32 | tv_sec_lo;
+  frame->tick = (tv_sec * 1000000) + (tv_nsec / 1000);
+
+  struct wd_frame *frame_iter, *frame_tmp;
+  wl_list_for_each_safe(frame_iter, frame_tmp, &frame->output->frames, link) {
+    if (frame != frame_iter) {
+      wd_frame_destroy(frame_iter);
+    }
+  }
+}
+
+#define WD_FRAME_COPY 0x100
+
+static void export_frame(void *data,
+    struct zwlr_export_dmabuf_frame_v1 *wlr_frame,
+    uint32_t width, uint32_t height, uint32_t offset_x, uint32_t offset_y,
+    uint32_t buffer_flags, uint32_t flags, uint32_t format,
+    uint32_t mod_high, uint32_t mod_low, uint32_t num_objects) {
+  struct wd_frame *frame = data;
+  frame->width = width;
+  frame->height = height;
+  frame->format = format;
+  frame->flags = buffer_flags;
+/*
+  if (flags & ZWLR_EXPORT_DMABUF_FRAME_V1_FLAGS_TRANSIENT) {
+    frame->flags |= WD_FRAME_COPY;
+  }
+*/
+  frame->modifier = ((uint64_t) mod_high << 32) | mod_low;
+  frame->n_planes = num_objects;
+}
+
+static void export_object(void *data,
+    struct zwlr_export_dmabuf_frame_v1 *wlr_frame,
+    uint32_t index, int32_t fd, uint32_t size, uint32_t offset,
+    uint32_t stride, uint32_t plane_index) {
+  struct wd_frame *frame = data;
+
+  if (frame->flags & WD_FRAME_COPY) {
+    void *src = NULL;
+    void *dest = NULL;
+    int wfd = create_shm_file(size, "/wd-%s", frame->output->name);
+    if (wfd == -1) {
+      goto done;
+    }
+    src = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, offset);
+    if (src == MAP_FAILED) {
+      fprintf(stderr, "mmap: %d: %s\n", fd, strerror(errno));
+      close(wfd);
+      wfd = -1;
+      goto done;
+    }
+    dest = mmap(NULL, size - offset, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE, wfd, 0);
+    if (dest == MAP_FAILED) {
+      fprintf(stderr, "mmap: %d: %s\n", wfd, strerror(errno));
+      close(wfd);
+      wfd = -1;
+      goto done;
+    }
+    memcpy(dest, src, size - offset);
+done:
+    if (src)
+      munmap(src, size);
+    if (dest)
+      munmap(dest, size - offset);
+    close(fd);
+    frame->fds[plane_index] = wfd;
+  } else {
+    frame->fds[plane_index] = fd;
+    frame->offsets[plane_index] = offset;
+  }
+  frame->strides[plane_index] = stride;
+}
+
+static void export_ready(void *data,
+    struct zwlr_export_dmabuf_frame_v1 *wlr_frame,
+    uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {
+  struct wd_frame *frame = data;
+
+  make_frame_current(frame, tv_sec_hi, tv_sec_lo, tv_nsec);
+
+  if (frame->flags & WD_FRAME_COPY) {
+    frame->flags ^= WD_FRAME_COPY;
+    zwlr_export_dmabuf_frame_v1_destroy(frame->export_frame);
+    frame->export_frame = NULL;
+  }
+  frame->ready = true;
+}
+
+static void export_cancel(void *data,
+    struct zwlr_export_dmabuf_frame_v1 *wlr_frame,
+    uint32_t reason) {
+  struct wd_frame *frame = data;
+  wd_frame_destroy(frame);
+}
+
+static struct zwlr_export_dmabuf_frame_v1_listener export_listener = {
+  .frame = export_frame,
+  .object = export_object,
+  .ready = export_ready,
+  .cancel = export_cancel
+};
+
 static void capture_buffer(void *data,
     struct zwlr_screencopy_frame_v1 *copy_frame,
     uint32_t format, uint32_t width, uint32_t height, uint32_t stride) {
@@ -199,22 +310,23 @@ static void capture_buffer(void *data,
     goto err;
   }
 
+  frame->n_planes = 1;
   size_t size = stride * height;
-  frame->capture_fd = create_shm_file(size, "/wd-%s", frame->output->name);
-  if (frame->capture_fd == -1) {
+  frame->fds[0] = create_shm_file(size, "/wd-%s", frame->output->name);
+  if (frame->fds[0] == -1) {
     goto err;
   }
 
   frame->pool = wl_shm_create_pool(frame->output->state->shm,
-      frame->capture_fd, size);
+      frame->fds[0], size);
   frame->buffer = wl_shm_pool_create_buffer(frame->pool, 0,
       width, height, stride, format);
   zwlr_screencopy_frame_v1_copy(copy_frame, frame->buffer);
-  frame->stride = stride;
+  frame->offsets[0] = 0;
+  frame->strides[0] = stride;
   frame->width = width;
   frame->height = height;
-  frame->swap_rgb = format == WL_SHM_FORMAT_ABGR8888
-    || format == WL_SHM_FORMAT_XBGR8888;
+  frame->format = format;
 
   return;
 err:
@@ -225,7 +337,9 @@ static void capture_flags(void *data,
     struct zwlr_screencopy_frame_v1 *wlr_frame,
     uint32_t flags) {
   struct wd_frame *frame = data;
-  frame->y_invert = !!(flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT);
+  if (flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT) {
+    frame->flags |= ZWP_LINUX_BUFFER_PARAMS_V1_FLAGS_Y_INVERT;
+  }
 }
 
 static void capture_ready(void *data,
@@ -233,27 +347,20 @@ static void capture_ready(void *data,
     uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {
   struct wd_frame *frame = data;
 
-  frame->pixels = mmap(NULL, frame->stride * frame->height,
-      PROT_READ, MAP_SHARED, frame->capture_fd, 0);
+  frame->pixels = mmap(NULL, frame->strides[0] * frame->height,
+      PROT_READ, MAP_SHARED, frame->fds[0], 0);
   if (frame->pixels == MAP_FAILED) {
     frame->pixels = NULL;
-    fprintf(stderr, "mmap: %d: %s\n", frame->capture_fd, strerror(errno));
+    fprintf(stderr, "mmap: %d: %s\n", frame->fds[0], strerror(errno));
     wd_frame_destroy(frame);
     return;
-  } else {
-    uint64_t tv_sec = (uint64_t) tv_sec_hi << 32 | tv_sec_lo;
-    frame->tick = (tv_sec * 1000000) + (tv_nsec / 1000);
   }
+  
+  make_frame_current(frame, tv_sec_hi, tv_sec_lo, tv_nsec);
 
-  zwlr_screencopy_frame_v1_destroy(frame->wlr_frame);
-  frame->wlr_frame = NULL;
-
-  struct wd_frame *frame_iter, *frame_tmp;
-  wl_list_for_each_safe(frame_iter, frame_tmp, &frame->output->frames, link) {
-    if (frame != frame_iter) {
-      wd_frame_destroy(frame_iter);
-    }
-  }
+  zwlr_screencopy_frame_v1_destroy(frame->copy_frame);
+  frame->copy_frame = NULL;
+  frame->ready = true;
 }
 
 static void capture_failed(void *data,
@@ -274,7 +381,7 @@ static bool has_pending_captures(struct wd_state *state) {
   wl_list_for_each(output, &state->outputs, link) {
     struct wd_frame *frame;
     wl_list_for_each(frame, &output->frames, link) {
-      if (frame->pixels == NULL) {
+      if (!frame->ready) {
         return true;
       }
     }
@@ -283,8 +390,8 @@ static bool has_pending_captures(struct wd_state *state) {
 }
 
 void wd_capture_frame(struct wd_state *state) {
-  if (state->copy_manager == NULL || has_pending_captures(state)
-      || !state->capture) {
+  if ((state->export_manager == NULL && state->copy_manager == NULL)
+       || has_pending_captures(state) || !state->capture) {
     return;
   }
 
@@ -292,12 +399,21 @@ void wd_capture_frame(struct wd_state *state) {
   wl_list_for_each(output, &state->outputs, link) {
     struct wd_frame *frame = calloc(1, sizeof(*frame));
     frame->output = output;
-    frame->capture_fd = -1;
-    frame->wlr_frame =
-      zwlr_screencopy_manager_v1_capture_output(state->copy_manager, 1,
-        output->wl_output);
-    zwlr_screencopy_frame_v1_add_listener(frame->wlr_frame, &capture_listener,
-        frame);
+    for (int i = 0; i < WD_MAX_PLANES; i++)
+      frame->fds[i] = -1;
+    if (state->export_manager) {
+      frame->export_frame =
+        zwlr_export_dmabuf_manager_v1_capture_output(state->export_manager, 1,
+          output->wl_output);
+      zwlr_export_dmabuf_frame_v1_add_listener(frame->export_frame,
+          &export_listener, frame);
+    } else if (state->copy_manager) {
+      frame->copy_frame =
+        zwlr_screencopy_manager_v1_capture_output(state->copy_manager, 1,
+          output->wl_output);
+      zwlr_screencopy_frame_v1_add_listener(frame->copy_frame,
+          &capture_listener, frame);
+    }
     wl_list_insert(&output->frames, &frame->link);
   }
 }
@@ -540,6 +656,9 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
   } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
     state->xdg_output_manager = wl_registry_bind(registry, name,
         &zxdg_output_manager_v1_interface, version);
+  } else if(strcmp(interface, zwlr_export_dmabuf_manager_v1_interface.name) == 0) {
+    state->export_manager = wl_registry_bind(registry, name,
+        &zwlr_export_dmabuf_manager_v1_interface, version);
   } else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
     state->copy_manager = wl_registry_bind(registry, name,
         &zwlr_screencopy_manager_v1_interface, version);
@@ -688,6 +807,9 @@ void wd_state_destroy(struct wd_state *state) {
   }
   if (state->layer_shell != NULL) {
     zwlr_layer_shell_v1_destroy(state->layer_shell);
+  }
+  if (state->export_manager != NULL) {
+    zwlr_export_dmabuf_manager_v1_destroy(state->export_manager);
   }
   if (state->copy_manager != NULL) {
     zwlr_screencopy_manager_v1_destroy(state->copy_manager);

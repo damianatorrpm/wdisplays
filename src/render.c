@@ -1,13 +1,24 @@
 /* SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
  * SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2018 Simon Ser
+ * SPDX-FileCopyrightText: 2018 Guido Günther
+ * SPDX-License-Identifier: MIT */
+/* Parts of this file are taken from swaywm/wlroots:
+ * https://github.com/swaywm/wlroots/blob/e97c2c3639119831ced4f6b9f704b096c2075973/render/egl.c
+ */
 
 #include "wdisplays.h"
 
+#define WL_EGL_PLATFORM 1
+
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-#include <epoxy/gl.h>
 #include <wayland-util.h>
+#include <epoxy/gl.h>
+#include <epoxy/egl.h>
+#include <drm_fourcc.h>
 
 #define BT_UV_VERT_SIZE (2 + 2)
 #define BT_UV_QUAD_SIZE (6 * BT_UV_VERT_SIZE)
@@ -29,22 +40,25 @@ enum gl_buffers {
   NUM_BUFFERS
 };
 
+struct wd_gl_texture_program {
+  GLuint id;
+  GLuint position_attribute;
+  GLuint uv_attribute;
+  GLuint screen_size_uniform;
+  GLuint texture_uniform;
+  GLuint color_transform_uniform;
+  GLuint color_add_uniform;
+};
+
 struct wd_gl_data {
+  EGLDisplay display;
+
   GLuint color_program;
-  GLuint color_vertex_shader;
-  GLuint color_fragment_shader;
   GLuint color_position_attribute;
   GLuint color_color_attribute;
   GLuint color_screen_size_uniform;
 
-  GLuint texture_program;
-  GLuint texture_vertex_shader;
-  GLuint texture_fragment_shader;
-  GLuint texture_position_attribute;
-  GLuint texture_uv_attribute;
-  GLuint texture_screen_size_uniform;
-  GLuint texture_texture_uniform;
-  GLuint texture_color_transform_uniform;
+  struct wd_gl_texture_program rgb;
 
   GLuint buffers[NUM_BUFFERS];
 
@@ -90,8 +104,9 @@ precision mediump float;\n\
 varying vec2 uv_out;\n\
 uniform sampler2D texture;\n\
 uniform mat4 color_transform;\n\
+uniform vec4 color_add;\n\
 void main(void) {\n\
-  gl_FragColor = texture2D(texture, uv_out) * color_transform;\n\
+  gl_FragColor = texture2D(texture, uv_out) * color_transform + color_add;\n\
 }";
 
 static GLuint gl_make_shader(GLenum type, const char *src) {
@@ -142,17 +157,61 @@ static void gl_link_and_validate(GLint program) {
   }
 }
 
-struct wd_gl_data *wd_gl_setup(void) {
+static void setup_texture_program(struct wd_gl_texture_program *prog,
+  const char *fragment_src) {
+  prog->id = glCreateProgram();
+
+  GLuint vertex_shader = gl_make_shader(GL_VERTEX_SHADER,
+      texture_vertex_shader_src);
+  glAttachShader(prog->id, vertex_shader);
+  GLuint fragment_shader = gl_make_shader(GL_FRAGMENT_SHADER, fragment_src);
+  glAttachShader(prog->id, fragment_shader);
+  gl_link_and_validate(prog->id);
+
+  glDeleteShader(fragment_shader);
+  glDeleteShader(vertex_shader);
+
+  prog->position_attribute = glGetAttribLocation(prog->id, "position");
+  prog->uv_attribute = glGetAttribLocation(prog->id, "uv");
+  prog->screen_size_uniform = glGetUniformLocation(prog->id, "screen_size");
+  prog->texture_uniform = glGetUniformLocation(prog->id, "texture");
+  prog->color_transform_uniform = glGetUniformLocation(prog->id,
+      "color_transform");
+  prog->color_add_uniform = glGetUniformLocation(prog->id, "color_add");
+}
+
+#define assert_ext(_name, _expr) do { \
+  static bool _tested_##_name = false; \
+  if (!_tested_##_name) { \
+    _tested_##_name = true; \
+    if (!(_expr)) \
+      wd_fatal_error(1, "Extension " #_name " not found\n"); \
+  } \
+} while (0)
+
+#define assert_gl_ext(_name) \
+  assert_ext(_name, epoxy_has_gl_extension(#_name))
+
+#define assert_egl_ext(_res, _name) \
+  assert_ext(_name, epoxy_has_egl_extension((_res)->display, #_name))
+   
+struct wd_gl_data *wd_gl_setup(struct wl_display *display) {
   struct wd_gl_data *res = calloc(1, sizeof(struct wd_gl_data));
+  res->display = eglGetDisplay(display);
   res->color_program = glCreateProgram();
 
-  res->color_vertex_shader = gl_make_shader(GL_VERTEX_SHADER,
+  GLuint vertex_shader = gl_make_shader(GL_VERTEX_SHADER,
       color_vertex_shader_src);
-  glAttachShader(res->color_program, res->color_vertex_shader);
-  res->color_fragment_shader = gl_make_shader(GL_FRAGMENT_SHADER,
+  glAttachShader(res->color_program, vertex_shader);
+  GLuint fragment_shader = gl_make_shader(GL_FRAGMENT_SHADER,
       color_fragment_shader_src);
-  glAttachShader(res->color_program, res->color_fragment_shader);
+  glAttachShader(res->color_program, fragment_shader);
   gl_link_and_validate(res->color_program);
+
+  glDeleteShader(fragment_shader);
+  glDeleteShader(vertex_shader);
+
+  setup_texture_program(&res->rgb, texture_fragment_shader_src);
 
   res->color_position_attribute = glGetAttribLocation(res->color_program,
       "position");
@@ -160,27 +219,6 @@ struct wd_gl_data *wd_gl_setup(void) {
       "color");
   res->color_screen_size_uniform = glGetUniformLocation(res->color_program,
       "screen_size");
-
-  res->texture_program = glCreateProgram();
-
-  res->texture_vertex_shader = gl_make_shader(GL_VERTEX_SHADER,
-      texture_vertex_shader_src);
-  glAttachShader(res->texture_program, res->texture_vertex_shader);
-  res->texture_fragment_shader = gl_make_shader(GL_FRAGMENT_SHADER,
-      texture_fragment_shader_src);
-  glAttachShader(res->texture_program, res->texture_fragment_shader);
-  gl_link_and_validate(res->texture_program);
-
-  res->texture_position_attribute = glGetAttribLocation(res->texture_program,
-      "position");
-  res->texture_uv_attribute = glGetAttribLocation(res->texture_program,
-      "uv");
-  res->texture_screen_size_uniform = glGetUniformLocation(res->texture_program,
-      "screen_size");
-  res->texture_texture_uniform = glGetUniformLocation(res->texture_program,
-      "texture");
-  res->texture_color_transform_uniform = glGetUniformLocation(
-      res->texture_program, "color_transform");
 
   glGenBuffers(NUM_BUFFERS, res->buffers);
   glBindBuffer(GL_ARRAY_BUFFER, res->buffers[TEXTURE_BUFFER]);
@@ -196,6 +234,83 @@ struct wd_gl_data *wd_gl_setup(void) {
       NULL, GL_DYNAMIC_DRAW);
 
   return res;
+}
+
+EGLImageKHR wd_gl_create_dmabuf_texture(struct wd_gl_data *res,
+    struct wd_frame *frame) {
+  assert(!frame->pixels);
+  assert_egl_ext(res, EGL_KHR_image_base);
+  assert_egl_ext(res, EGL_EXT_image_dma_buf_import);
+
+  bool has_modifier = frame->modifier != DRM_FORMAT_MOD_INVALID
+    && frame->modifier != DRM_FORMAT_MOD_LINEAR;
+
+  if (has_modifier) {
+    assert_egl_ext(res, EGL_EXT_image_dma_buf_import_modifiers);
+  }
+
+  unsigned int atti = 0;
+  EGLint attribs[50];
+  attribs[atti++] = EGL_WIDTH;
+  attribs[atti++] = frame->width;
+  attribs[atti++] = EGL_HEIGHT;
+  attribs[atti++] = frame->height;
+  attribs[atti++] = EGL_LINUX_DRM_FOURCC_EXT;
+  attribs[atti++] = frame->format;
+
+  struct {
+    EGLint fd;
+    EGLint offset;
+    EGLint pitch;
+    EGLint mod_lo;
+    EGLint mod_hi;
+  } attr_names[WD_MAX_PLANES] = {
+    {
+      EGL_DMA_BUF_PLANE0_FD_EXT,
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE0_PITCH_EXT,
+      EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT
+    }, {
+      EGL_DMA_BUF_PLANE1_FD_EXT,
+      EGL_DMA_BUF_PLANE1_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE1_PITCH_EXT,
+      EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT
+    }, {
+      EGL_DMA_BUF_PLANE2_FD_EXT,
+      EGL_DMA_BUF_PLANE2_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE2_PITCH_EXT,
+      EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT
+    }, {
+      EGL_DMA_BUF_PLANE3_FD_EXT,
+      EGL_DMA_BUF_PLANE3_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE3_PITCH_EXT,
+      EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT
+    }
+  };
+
+  for (int i=0; i < frame->n_planes; i++) {
+    attribs[atti++] = attr_names[i].fd;
+    attribs[atti++] = frame->fds[i];
+    attribs[atti++] = attr_names[i].offset;
+    attribs[atti++] = frame->offsets[i];
+    attribs[atti++] = attr_names[i].pitch;
+    attribs[atti++] = frame->strides[i];
+    if (has_modifier) {
+      attribs[atti++] = attr_names[i].mod_lo;
+      attribs[atti++] = frame->modifier & 0xFFFFFFFF;
+      attribs[atti++] = attr_names[i].mod_hi;
+      attribs[atti++] = frame->modifier >> 32;
+    }
+  }
+  attribs[atti++] = EGL_NONE;
+  assert(atti < sizeof(attribs)/sizeof(attribs[0]));
+
+  return eglCreateImageKHR(res->display, EGL_NO_CONTEXT,
+      EGL_LINUX_DMA_BUF_EXT, NULL, attribs);
 }
 
 static const GLfloat TRANSFORM_RGB[16] = {
@@ -320,34 +435,42 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
   float screen_size[2] = { info->viewport_width, info->viewport_height };
 
   if (tri_verts > 0) {
-    glUseProgram(res->texture_program);
+    glUseProgram(res->rgb.id);
     glBindBuffer(GL_ARRAY_BUFFER, res->buffers[TEXTURE_BUFFER]);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
         tri_verts * BT_UV_VERT_SIZE * sizeof(float), res->verts);
-    glEnableVertexAttribArray(res->texture_position_attribute);
-    glEnableVertexAttribArray(res->texture_uv_attribute);
-    glVertexAttribPointer(res->texture_position_attribute,
+    glEnableVertexAttribArray(res->rgb.position_attribute);
+    glEnableVertexAttribArray(res->rgb.uv_attribute);
+    glVertexAttribPointer(res->rgb.position_attribute,
         2, GL_FLOAT, GL_FALSE,
         BT_UV_VERT_SIZE * sizeof(float), (void *) (0 * sizeof(float)));
-    glVertexAttribPointer(res->texture_uv_attribute, 2, GL_FLOAT, GL_FALSE,
+    glVertexAttribPointer(res->rgb.uv_attribute, 2, GL_FLOAT, GL_FALSE,
         BT_UV_VERT_SIZE * sizeof(float), (void *) (2 * sizeof(float)));
-    glUniform2fv(res->texture_screen_size_uniform, 1, screen_size);
-    glUniform1i(res->texture_texture_uniform, 0);
+    glUniform2fv(res->rgb.screen_size_uniform, 1, screen_size);
+    glUniform1i(res->rgb.texture_uniform, 0);
     glActiveTexture(GL_TEXTURE0);
 
     i = 0;
     wl_list_for_each_reverse(head, &info->heads, link) {
       glBindTexture(GL_TEXTURE_2D, res->textures[i]);
       if (head->updated_at == tick) {
-        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, head->tex_stride / 4);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-            head->tex_width, head->tex_height,
-            0, GL_RGBA, GL_UNSIGNED_BYTE, head->pixels);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+        if (head->image) {
+          assert_gl_ext(GL_OES_EGL_image);
+          glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, head->image);
+        } else if (head->pixels) {
+          assert_gl_ext(GL_EXT_unpack_subimage);
+          glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, head->tex_stride / 4);
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+              head->tex_width, head->tex_height,
+              0, GL_RGBA, GL_UNSIGNED_BYTE, head->pixels);
+          glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+        }
         glGenerateMipmap(GL_TEXTURE_2D);
       }
-      glUniformMatrix4fv(res->texture_color_transform_uniform, 1, GL_FALSE,
+      glUniformMatrix4fv(res->rgb.color_transform_uniform, 1, GL_FALSE,
         head->swap_rgb ? TRANSFORM_RGB : TRANSFORM_BGR);
+      float color_add[4] = { 0.f, 0.f, 0.f, head->has_alpha ? 0.f : 1.f };
+      glUniform4fv(res->rgb.color_add_uniform, 1, color_add);
       glDrawArrays(GL_TRIANGLES, i * 6, 6);
       i++;
       if (i >= HEADS_MAX)
@@ -514,13 +637,9 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
 
 void wd_gl_cleanup(struct wd_gl_data *res) {
   glDeleteBuffers(NUM_BUFFERS, res->buffers);
-  glDeleteShader(res->texture_fragment_shader);
-  glDeleteShader(res->texture_vertex_shader);
-  glDeleteProgram(res->texture_program);
-
-  glDeleteShader(res->color_fragment_shader);
-  glDeleteShader(res->color_vertex_shader);
   glDeleteProgram(res->color_program);
+
+  glDeleteProgram(res->rgb.id);
 
   free(res);
 }
