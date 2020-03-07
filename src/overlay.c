@@ -7,7 +7,7 @@
 #include <errno.h>
 
 #include <gtk/gtk.h>
-#include <gdk/gdkwayland.h>
+#include <gdk/wayland/gdkwayland.h>
 
 #include "wdisplays.h"
 
@@ -39,8 +39,8 @@ static inline int min(int a, int b) {
 static PangoLayout *create_text_layout(struct wd_head *head,
     PangoContext *pango, GtkStyleContext *style) {
   GtkStyleContext *desc_style = gtk_style_context_new();
-  gtk_style_context_set_screen(desc_style,
-      gtk_style_context_get_screen(style));
+  gtk_style_context_set_display(desc_style,
+      gtk_style_context_get_display(style));
   GtkWidgetPath *desc_path = gtk_widget_path_copy(
       gtk_style_context_get_path(style));
   gtk_widget_path_append_type(desc_path, G_TYPE_NONE);
@@ -48,8 +48,7 @@ static PangoLayout *create_text_layout(struct wd_head *head,
   gtk_style_context_add_class(desc_style, "description");
 
   double desc_font_size = 16.;
-  gtk_style_context_get(desc_style, GTK_STATE_FLAG_NORMAL,
-      "font-size", &desc_font_size, NULL);
+  gtk_style_context_get(desc_style, "font-size", &desc_font_size, NULL);
 
   g_autofree gchar *str = g_strdup_printf("%s\n<span size=\"%d\">%s</span>",
       head->name, (int) (desc_font_size * PANGO_SCALE), head->description);
@@ -70,7 +69,7 @@ static void resize(struct wd_output *output) {
   }
   uint32_t margin =  min(screen_width, screen_height) * SCREEN_MARGIN_PERCENT;
 
-  GdkWindow *window = gtk_widget_get_window(output->overlay_window);
+  GdkSurface *surface = gtk_widget_get_surface(output->overlay_window);
   PangoContext *pango = gtk_widget_get_pango_context(output->overlay_window);
   GtkStyleContext *style_ctx = gtk_widget_get_style_context(
       output->overlay_window);
@@ -83,7 +82,7 @@ static void resize(struct wd_output *output) {
 
 
   GtkBorder padding;
-  gtk_style_context_get_padding(style_ctx, GTK_STATE_FLAG_NORMAL, &padding);
+  gtk_style_context_get_padding(style_ctx, &padding);
 
   width = min(width, screen_width - margin * 2)
     + padding.left + padding.right;
@@ -95,10 +94,10 @@ static void resize(struct wd_output *output) {
   zwlr_layer_surface_v1_set_size(output->overlay_layer_surface,
       width, height);
 
-  struct wl_surface *surface = gdk_wayland_window_get_wl_surface(window);
-  wl_surface_commit(surface);
+  struct wl_surface *wl_surface = gdk_wayland_surface_get_wl_surface(surface);
+  wl_surface_commit(wl_surface);
 
-  GdkDisplay *display = gdk_window_get_display(window);
+  GdkDisplay *display = gdk_surface_get_display(surface);
   wl_display_roundtrip(gdk_wayland_display_get_wl_display(display));
 }
 
@@ -110,22 +109,23 @@ void wd_redraw_overlay(struct wd_output *output) {
 }
 
 void window_realize(GtkWidget *widget, gpointer data) {
-  GdkWindow *window = gtk_widget_get_window(widget);
-  gdk_wayland_window_set_use_custom_surface(window);
+  //FIXME - custom surfaces in GTK4 wayland?
+  GdkSurface *surface = gtk_widget_get_surface(widget);
+  gdk_wayland_surface_set_use_custom_surface(surface);
 }
 
 void window_map(GtkWidget *widget, gpointer data) {
   struct wd_output *output = data;
 
-  GdkWindow *window = gtk_widget_get_window(widget);
+  GdkSurface *surface = gtk_widget_get_surface(widget);
   cairo_region_t *region = cairo_region_create();
-  gdk_window_input_shape_combine_region(window, region, 0, 0);
+  gdk_surface_input_shape_combine_region(surface, region, 0, 0);
   cairo_region_destroy(region);
 
-  struct wl_surface *surface = gdk_wayland_window_get_wl_surface(window);
+  struct wl_surface *wl_surface = gdk_wayland_surface_get_wl_surface(surface);
 
   output->overlay_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
-      output->state->layer_shell, surface, output->wl_output,
+      output->state->layer_shell, wl_surface, output->wl_output,
       ZWLR_LAYER_SHELL_V1_LAYER_TOP, "output-overlay");
 
   zwlr_layer_surface_v1_add_listener(output->overlay_layer_surface,
@@ -149,14 +149,14 @@ gboolean window_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
 
   GtkStyleContext *style_ctx = gtk_widget_get_style_context(widget);
   GdkRGBA fg;
-  gtk_style_context_get_color(style_ctx, GTK_STATE_FLAG_NORMAL, &fg);
+  gtk_style_context_get_color(style_ctx, &fg);
 
   int width = gtk_widget_get_allocated_width(widget);
   int height = gtk_widget_get_allocated_height(widget);
   gtk_render_background(style_ctx, cr, 0, 0, width, height);
 
   GtkBorder padding;
-  gtk_style_context_get_padding(style_ctx, GTK_STATE_FLAG_NORMAL, &padding);
+  gtk_style_context_get_padding(style_ctx, &padding);
   PangoContext *pango = gtk_widget_get_pango_context(widget);
   PangoLayout *layout = create_text_layout(head, pango, style_ctx);
 
@@ -171,7 +171,6 @@ void wd_create_overlay(struct wd_output *output) {
   output->overlay_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_decorated(GTK_WINDOW(output->overlay_window), FALSE);
   gtk_window_set_resizable(GTK_WINDOW(output->overlay_window), FALSE);
-  gtk_widget_add_events(output->overlay_window, GDK_STRUCTURE_MASK);
 
   g_signal_connect(output->overlay_window, "realize",
       G_CALLBACK(window_realize), output);

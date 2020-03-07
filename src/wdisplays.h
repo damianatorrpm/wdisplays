@@ -335,16 +335,16 @@ void wd_gl_cleanup(struct wd_gl_data *res);
  * Create an overlay on the screen that contains a textual description of the
  * output. This is to help the user identify the outputs visually.
  */
-void wd_create_overlay(struct wd_output *output);
+static inline void wd_create_overlay(struct wd_output *output) {}
 
 /*
  * Forces redrawing of the screen overlay on the given output.
  */
-void wd_redraw_overlay(struct wd_output *output);
+static inline void wd_redraw_overlay(struct wd_output *output) {}
 
 /*
  * Destroys the screen overlay on the given output.
  */
-void wd_destroy_overlay(struct wd_output *output);
+static inline void wd_destroy_overlay(struct wd_output *output) {}
 
 #endif

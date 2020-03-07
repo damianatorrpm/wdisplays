@@ -16,7 +16,7 @@ setups.
 Build requirements are:
 
 - meson
-- GTK+3
+- GTK4
 - epoxy
 - wayland-client
 
