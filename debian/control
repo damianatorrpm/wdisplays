@@ -1,0 +1,23 @@
+Source: wdisplays
+Section: x11
+Priority: optional
+Maintainer: Jason Francis <cycl0ps@tuta.io>
+Build-Depends: debhelper-compat (= 12),
+  meson,
+  libwayland-dev,
+  libgtk-3-dev,
+  libepoxy-dev
+Standards-Version: 4.5.0
+Homepage: https://cyclopsian.github.io/wdisplays
+Vcs-Browser: https://github.com/cyclopsian/wdisplays
+Vcs-Git: https://github.com/cyclopsian/wdisplays.git
+
+Package: wdisplays
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: GUI display configurator for wlroots compositors
+  wdisplays is a graphical application for configuring displays in Wayland
+  compositors. It works with any compositor that implements the
+  wlr-output-management-unstable-v1 protocol, including sway.  The goal of this
+  project is to allow precise adjustment of display settings in kiosks, digital
+  signage, and other elaborate multi-monitor setups.
