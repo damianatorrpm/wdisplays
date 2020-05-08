@@ -1,0 +1,58 @@
+<svg width="128" height="104" enable-background="new" version="1.0" viewBox="0 0 128 104" xmlns="http://www.w3.org/2000/svg" xmlns:osb="http://www.openswatchbook.org/uri/2009/osb" xmlns:xlink="http://www.w3.org/1999/xlink">
+ <defs>
+  <linearGradient id="a">
+   <stop stop-color="#1a5fb4" offset="0"/>
+   <stop stop-color="#1c71d8" offset=".041667"/>
+   <stop stop-color="#1a5fb4" offset=".083333"/>
+   <stop stop-color="#1a5fb4" offset=".91667"/>
+   <stop stop-color="#1c71d8" offset=".95833"/>
+   <stop stop-color="#1a5fb4" offset="1"/>
+  </linearGradient>
+  <linearGradient id="b">
+   <stop stop-color="#62a0ea" offset="0"/>
+   <stop stop-color="#1c71d8" offset="1"/>
+  </linearGradient>
+  <linearGradient id="g" x1="88.596" x2="536.6" y1="-449.39" y2="-449.39" gradientTransform="matrix(.25 0 0 .25 -14.149 380.35)" gradientUnits="userSpaceOnUse">
+   <stop stop-color="#3d3846" offset="0"/>
+   <stop stop-color="#77767b" offset=".035714"/>
+   <stop stop-color="#5e5c64" offset=".071365"/>
+   <stop stop-color="#5e5c64" offset=".92857"/>
+   <stop stop-color="#77767b" offset=".96429"/>
+   <stop stop-color="#3d3846" offset="1"/>
+  </linearGradient>
+  <linearGradient id="f" x1="12" x2="60" y1="240" y2="240" gradientTransform="translate(2,-30)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+  <radialGradient id="c" cx="3.6208" cy="206.8" r="16" gradientTransform="matrix(7 -3.4009e-7 2.1256e-7 4.375 -25.346 -728.77)" gradientUnits="userSpaceOnUse" xlink:href="#b"/>
+  <linearGradient id="i" x1="12" x2="60" y1="240" y2="240" gradientTransform="translate(54,-30)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+  <radialGradient id="e" cx="3.6208" cy="206.8" r="16" gradientTransform="matrix(7 -3.4009e-7 2.1256e-7 4.375 26.654 -728.77)" gradientUnits="userSpaceOnUse" xlink:href="#b"/>
+  <linearGradient id="h" x1="12" x2="60" y1="240" y2="240" gradientTransform="translate(28,8)" gradientUnits="userSpaceOnUse" xlink:href="#a"/>
+  <radialGradient id="d" cx="3.6208" cy="206.8" r="16" gradientTransform="matrix(7 -3.4009e-7 2.1256e-7 4.375 .65446 -690.77)" gradientUnits="userSpaceOnUse" xlink:href="#b"/>
+ </defs>
+ <g transform="translate(0,-172)">
+  <rect x="10" y="182" width="108" height="80" rx="6" ry="6" fill="#deddda" style="paint-order:markers fill stroke"/>
+  <rect x="8" y="180" width="112" height="88" rx="8" ry="8" enable-background="new" fill="url(#g)" style="paint-order:normal"/>
+  <g>
+   <rect x="8" y="180" width="112" height="84" rx="8" ry="8" fill="#9a9996" style="paint-order:markers fill stroke"/>
+   <rect x="14" y="186" width="48" height="34" rx="4" ry="4" fill="url(#f)" style="paint-order:markers fill stroke"/>
+   <rect x="14" y="186" width="48" height="32" rx="4" ry="4" fill="url(#c)" style="paint-order:markers fill stroke"/>
+  </g>
+  <rect x="16" y="188" width="44" height="28" rx="2" ry="2" fill="#99c1f1" fill-opacity=".21912" style="paint-order:markers fill stroke"/>
+  <rect x="66" y="186" width="48" height="34" rx="4" ry="4" fill="url(#i)" style="paint-order:markers fill stroke"/>
+  <rect x="66" y="186" width="48" height="32" rx="4" ry="4" fill="url(#e)" style="paint-order:markers fill stroke"/>
+  <rect x="68" y="188" width="44" height="28" rx="2" ry="2" fill="#99c1f1" fill-opacity=".21912" style="paint-order:markers fill stroke"/>
+  <rect x="40" y="224" width="48" height="34" rx="4" ry="4" fill="url(#h)" style="paint-order:markers fill stroke"/>
+  <rect x="40" y="224" width="48" height="32" rx="4" ry="4" fill="url(#d)" style="paint-order:markers fill stroke"/>
+  <rect x="42" y="226" width="44" height="28" rx="2" ry="2" fill="#99c1f1" fill-opacity=".21912" style="paint-order:markers fill stroke"/>
+  <g fill="none" stroke="#fff" stroke-dasharray="4, 4" stroke-opacity=".16206" stroke-width="4">
+   <g stroke-dashoffset="4">
+    <path d="m14 222h100"/>
+    <path d="m64 186v34"/>
+    <path d="m38 224v34"/>
+    <path d="m90 224v34"/>
+    <path d="m10 184h108"/>
+    <path d="m10 260h108"/>
+   </g>
+   <path d="m12 186v72" stroke-dashoffset="6"/>
+   <path d="m116 186v72" stroke-dashoffset="6"/>
+  </g>
+ </g>
+</svg>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>wdisplays</title>
+  <style>
+* { font-family: sans-serif; color: #333; }
+body { background: #ddd; margin: 0; }
+.content { width: 1024px; margin: auto; display: flex; }
+header .container { margin: 0.5em; }
+header .title { display: flex; flex: 1; }
+header .icon { width: 78px; margin: 0 8px; }
+header .text { flex: 1; display: flex; flex-direction: column; align-self: center; }
+header h1 { font-size: 20pt; font-weight: bold; margin: 0; }
+header h2 { font-size: 12pt; font-weight: normal; margin: 0; }
+header .links { display: flex; margin: 0; padding: 0; }
+header .links li { align-self: stretch; font-size: 12pt; list-style-type: none; margin: 0; }
+header .links a { padding: 0 2em; display: inline-block; height: 100%; line-height: 67px; vertical-align: middle; }
+footer .content { color: #888; text-align: center; display: block; padding: 0.5em; }
+a { color: #1a5fb4; text-decoration: none; }
+a:hover { color: #2e7ddd; }
+a:active { color: #448ce1; }
+#splash { background: #bbb; }
+#splash li { list-style-type: none; }
+#splash .text { margin: 0.5em; flex: 1; }
+#splash h1 { font-size: 12pt; margin: 0.25em 0; }
+#splash .screenshot img { height: 302px; width: 545px; }
+@media only screen and (max-width: 1024px) {
+  .content { width: 100% }
+}
+@media only screen and (max-width: 800px) {
+  #splash .content { flex-direction: column-reverse; }
+  #splash .screenshot img { height: auto; width: 100%; }
+  header h1 { font-size: 12pt; }
+  header h2 { font-size: 8pt; }
+}
+@media only screen and (max-width: 500px) {
+  header .links { justify-content: center; }
+  header .links a { padding: 0; line-height: 1em; }
+  header .content { flex-direction: column; }
+}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="content">
+        <span class="title">
+          <span><img src="./wdisplays.svg" class="icon" alt="Icon"></span>
+          <span class="text">
+            <h1>wdisplays</h1>
+            <h2>wlroots display GUI</h2>
+          </span>
+        </span>
+        <ul class="links">
+          <li>
+            <a href="https://github.com/cyclopsian/wdisplays">Source Code</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </header>
+  <section id="splash">
+    <span class="content">
+      <span class="text">
+        <h1>Get control of your Wayland displays.</h1>
+        <p>
+        Use wdisplays to arrange your monitors how you like them. Adjust your
+        screen size and positioning visually, or enter in precise values.
+        Use the live screen preview to align your screen to its content.
+        Makes configuring multi-monitor setups a breeze.
+        </p>
+        <p>
+        Works with
+        popular wlroots compositors like <a href="https://swaywm.org">Sway</a>
+        and <a href="https://wayfire.org">Wayfire</a>.
+        </p>
+
+      </span>
+      <a href="./shot1.png" title="Screenshot" class="screenshot">
+        <img src="./shot1.png" alt="Screenshot">
+      </a>
+    </span>
+  </section>
+  <footer>
+    <div class="content">
+      Copyright © 2020 Jason Francis.
+      <br>
+      Page content licensed under
+      <a href="https://creativecommons.org/licenses/by-sa/4.0/legalcode">CC-BY-SA-4.0</a>.
+    </div>
+  </footer>
+</body>
+</html>
