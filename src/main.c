@@ -985,6 +985,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->info_bar = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info"));
   state->info_label = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info_label"));
   state->menu_button = GTK_WIDGET(gtk_builder_get_object(builder, "menu_button"));
+  gtk_widget_set_visible(state->stack_switcher, FALSE);
+  gtk_widget_set_visible(state->header_stack, FALSE);
+  gtk_widget_set_visible(state->stack, FALSE);
 
   g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_changed), state);
   g_signal_connect(window, "destroy", G_CALLBACK(cleanup), state);

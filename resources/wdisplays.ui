@@ -112,7 +112,7 @@
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkStackSwitcher" id="heads_stack_switcher">
-                        <property name="visible">False</property>
+                        <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="halign">center</property>
                         <property name="margin_start">8</property>
@@ -129,7 +129,7 @@
                     </child>
                     <child>
                       <object class="GtkStack" id="heads_stack">
-                        <property name="visible">False</property>
+                        <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="transition_type">crossfade</property>
                         <child>
@@ -176,7 +176,7 @@
     </child>
     <child type="titlebar">
       <object class="GtkStack" id="header_stack">
-        <property name="visible">False</property>
+        <property name="visible">True</property>
         <property name="can_focus">False</property>
         <property name="transition_type">crossfade</property>
         <child>
