@@ -973,9 +973,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
       WDISPLAYS_RESOURCE_PREFIX "/wdisplays.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
   state->main_box = GTK_WIDGET(gtk_builder_get_object(builder, "main_box"));
-  // state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
+  state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
   // state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
-  // state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
+  state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
   state->scroller = GTK_WIDGET(gtk_builder_get_object(builder, "heads_scroll"));
   state->spinner = GTK_WIDGET(gtk_builder_get_object(builder, "spinner"));
   state->zoom_out = GTK_WIDGET(gtk_builder_get_object(builder, "zoom_out"));
