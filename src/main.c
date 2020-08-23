@@ -973,9 +973,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
       WDISPLAYS_RESOURCE_PREFIX "/wdisplays.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
   state->main_box = GTK_WIDGET(gtk_builder_get_object(builder, "main_box"));
-  state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
-  state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
-  state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
+  // state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
+  // state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
+  // state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
   state->scroller = GTK_WIDGET(gtk_builder_get_object(builder, "heads_scroll"));
   state->spinner = GTK_WIDGET(gtk_builder_get_object(builder, "spinner"));
   state->zoom_out = GTK_WIDGET(gtk_builder_get_object(builder, "zoom_out"));
@@ -985,10 +985,6 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->info_bar = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info"));
   state->info_label = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info_label"));
   state->menu_button = GTK_WIDGET(gtk_builder_get_object(builder, "menu_button"));
-  gtk_widget_set_visible(state->stack_switcher, FALSE);
-  gtk_widget_set_visible(state->header_stack, FALSE);
-  gtk_widget_set_visible(state->stack, FALSE);
-  gtk_widget_set_visible(state->main_box, FALSE);
 
   g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_changed), state);
   g_signal_connect(window, "destroy", G_CALLBACK(cleanup), state);
