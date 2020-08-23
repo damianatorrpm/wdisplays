@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="gsettings-desktop-schemas">
+ <schema id="network.cycles.wdisplays" path="/network/cycles/wdisplays/">
+    <key type="b" name="overlay">
+      <default>true</default>
+      <description>If an overlay is show on each display.</description>
+    </key>
+    <key type="b" name="capture">
+      <default>false</default>    
+      <description>If the display contents are drawn as preview.</description>
+    </key>
+    <key type="b" name="auto-apply">
+      <default>false</default>
+      <description>If the display contents are drawn as preview.</description>
+    </key>
+  </schema>
+</schemalist>

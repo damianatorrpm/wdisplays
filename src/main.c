@@ -22,6 +22,10 @@ __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
 #define CANVAS_MARGIN 40
 
 static const char *APP_PREFIX = "app";
+GSettings *settings;
+GSimpleAction *capture_action;
+GSimpleAction *overlay_action;
+GSimpleAction *apply_action;
 
 static bool has_changes(const struct wd_state *state) {
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
@@ -857,9 +861,7 @@ static void info_bar_animation_done(GObject *object, GParamSpec *pspec, gpointer
 }
 
 static void auto_apply_selected(GSimpleAction *action, GVariant *param, gpointer data) {
-  struct wd_state *state = data;
-  state->autoapply = g_variant_get_boolean(param);
-  g_simple_action_set_state(action, param);
+  g_settings_set_boolean(settings, "auto-apply", g_variant_get_boolean(param));
 }
 
 static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data) {
@@ -873,27 +875,54 @@ static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpo
 }
 
 static void capture_selected(GSimpleAction *action, GVariant *param, gpointer data) {
-  struct wd_state *state = data;
-  state->capture = g_variant_get_boolean(param);
-  g_simple_action_set_state(action, param);
-  update_tick_callback(state);
+  g_settings_set_boolean(settings, "capture", g_variant_get_boolean(param));
 }
 
 static void overlay_selected(GSimpleAction *action, GVariant *param, gpointer data) {
-  struct wd_state *state = data;
-  state->show_overlay = g_variant_get_boolean(param);
-  g_simple_action_set_state(action, param);
-
-  struct wd_output *output;
-  wl_list_for_each(output, &state->outputs, link) {
-    if (state->show_overlay) {
-      wd_create_overlay(output);
-    } else {
-      wd_destroy_overlay(output);
-    }
-  }
+  g_settings_set_boolean(settings, "overlay", g_variant_get_boolean(param));
 }
 
+static void settings_changed_slot(GSettings *settings, gchar *key, gpointer data)
+{
+    if (g_strcmp0(key, "capture") == 0) {
+       struct wd_state *state = data;
+
+       if (state->copy_manager == NULL) {
+            return;
+        }
+
+      state->capture = g_settings_get_boolean(settings, "capture");
+      GVariant* param = g_variant_new_boolean(state->capture);
+      g_simple_action_set_state(capture_action, param);
+      update_tick_callback(state);
+    }
+    else if (g_strcmp0(key, "overlay") == 0)
+    {
+        struct wd_state *state = data;
+        if (state->layer_shell == NULL) {
+            return;
+        }
+        state->show_overlay = g_settings_get_boolean(settings, "overlay");
+        GVariant* param = g_variant_new_boolean(state->show_overlay);
+        g_simple_action_set_state(overlay_action, param);
+
+        struct wd_output *output;
+        wl_list_for_each(output, &state->outputs, link) {
+          if (state->show_overlay) {
+              wd_create_overlay(output);
+          } else {
+              wd_destroy_overlay(output);
+          }
+        }
+    }
+    else if (g_strcmp0(key, "auto-apply") == 0)
+    {
+        struct wd_state *state = data;
+        state->autoapply = g_settings_get_boolean(settings, "auto-apply");
+        GVariant* param = g_variant_new_boolean(state->autoapply);
+        g_simple_action_set_state(apply_action, param);        
+    }
+}
 static void window_state_changed(GtkWidget *window, GdkEventWindowState *event,
     gpointer data) {
   struct wd_state *state = data;
@@ -920,6 +949,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
   }
 
   struct wd_state *state = wd_state_create();
+  settings = g_settings_new("network.cycles.wdisplays");
+  state->capture = g_settings_get_boolean(settings, "capture");
+  state->show_overlay = g_settings_get_boolean(settings, "overlay");
+  state->autoapply = g_settings_get_boolean(settings, "auto-apply");
+
   state->zoom = DEFAULT_ZOOM;
   state->canvas_tick = -1;
   state->apply_idle = -1;
@@ -1019,17 +1053,17 @@ static void activate(GtkApplication* app, gpointer user_data) {
   g_signal_connect(action, "activate", G_CALLBACK(zoom_in), state);
   g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(action));
 
-  action = g_simple_action_new_stateful("auto-apply", NULL,
+  apply_action = g_simple_action_new_stateful("auto-apply", NULL,
       g_variant_new_boolean(state->autoapply));
-  g_signal_connect(action, "change-state", G_CALLBACK(auto_apply_selected), state);
-  g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(action));
+  g_signal_connect(apply_action, "change-state", G_CALLBACK(auto_apply_selected), state);
+  g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(apply_action));
 
-  GSimpleAction *capture_action = g_simple_action_new_stateful("capture-screens", NULL,
+  capture_action = g_simple_action_new_stateful("capture-screens", NULL,
       g_variant_new_boolean(state->capture));
   g_signal_connect(capture_action, "change-state", G_CALLBACK(capture_selected), state);
   g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(capture_action));
 
-  GSimpleAction *overlay_action = g_simple_action_new_stateful("show-overlay", NULL,
+  overlay_action = g_simple_action_new_stateful("show-overlay", NULL,
       g_variant_new_boolean(state->show_overlay));
   g_signal_connect(overlay_action, "change-state", G_CALLBACK(overlay_selected), state);
   g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(overlay_action));
@@ -1054,11 +1088,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
   if (state->xdg_output_manager == NULL) {
     wd_fatal_error(1, "Compositor doesn't support xdg-output-unstable-v1");
   }
+
   if (state->copy_manager == NULL) {
     state->capture = FALSE;
     g_simple_action_set_state(capture_action, g_variant_new_boolean(state->capture));
     g_simple_action_set_enabled(capture_action, FALSE);
   }
+
   if (state->layer_shell == NULL) {
     state->show_overlay = FALSE;
     g_simple_action_set_state(overlay_action, g_variant_new_boolean(state->show_overlay));
@@ -1078,6 +1114,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_widget_show_all(window);
   g_object_unref(builder);
   update_tick_callback(state);
+  g_signal_connect(settings, "changed", G_CALLBACK(settings_changed_slot), state);
 }
 // END GLOBAL CALLBACKS
 

@@ -40,6 +40,16 @@ if scour.found()
 install_data(icon, install_dir: icondir)
   endif
 
+gnome.compile_schemas(
+  build_by_default: true,
+  depend_files: 'network.cycles.wdisplays.gschema.xml'
+)
+
+install_data(
+  'network.cycles.wdisplays.gschema.xml',
+  install_dir: join_paths(get_option('datadir'), 'glib-2.0', 'schemas')
+)
+
 install_data(
     configure_file(input: 'wdisplays.desktop.in',
       output: '@0@.desktop'.format(meson.project_name()),
